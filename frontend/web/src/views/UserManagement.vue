@@ -1,5 +1,25 @@
 <template>
   <div class="user-management">
+    <div class="search-bar">
+      <el-input
+        v-model="searchForm.username"
+        placeholder="用户名"
+        clearable
+        style="width: 180px"
+        @keyup.enter="handleSearch"
+      />
+      <el-select v-model="searchForm.status" placeholder="状态" clearable style="width: 140px">
+        <el-option label="启用" :value="1" />
+        <el-option label="禁用" :value="0" />
+      </el-select>
+      <el-select v-model="searchForm.roleLevel" placeholder="权限级别" clearable style="width: 160px">
+        <el-option label="用户权限" :value="1" />
+        <el-option label="管理员权限" :value="2" />
+        <el-option label="超级管理员权限" :value="3" />
+      </el-select>
+      <el-button type="primary" @click="handleSearch">搜索</el-button>
+    </div>
+
     <div class="page-header">
       <el-button type="primary" :icon="Plus" @click="openCreateDialog">
         添加用户
@@ -16,6 +36,7 @@
     >
       <el-table-column prop="username" label="用户名" width="120" />
       <el-table-column prop="name" label="姓名" width="100" />
+      <el-table-column prop="departmentName" label="所属部门" width="120" />
       <el-table-column prop="gender" label="性别" width="80" />
       <el-table-column prop="phone" label="联系方式" width="140" />
       <el-table-column label="权限级别" width="120">
@@ -45,6 +66,18 @@
       </el-table-column>
     </el-table>
 
+    <div class="pagination">
+      <el-pagination
+        :current-page="currentPage"
+        :page-size="pageSize"
+        :total="total"
+        :page-sizes="[10, 20, 50]"
+        layout="total, sizes, prev, pager, next"
+        @current-change="onPageChange"
+        @size-change="onSizeChange"
+      />
+    </div>
+
     <el-dialog
       v-model="dialogVisible"
       :title="isEdit ? '编辑用户' : '添加用户'"
@@ -62,6 +95,21 @@
         </el-form-item>
         <el-form-item label="姓名" prop="name">
           <el-input v-model="formData.name" placeholder="请输入姓名" />
+        </el-form-item>
+        <el-form-item label="所属部门" prop="departmentId">
+          <el-select
+            v-model="formData.departmentId"
+            placeholder="请选择所属部门"
+            clearable
+            style="width: 100%"
+          >
+            <el-option
+              v-for="department in departments"
+              :key="department.id"
+              :label="department.name"
+              :value="department.id"
+            />
+          </el-select>
         </el-form-item>
         <el-form-item label="性别" prop="gender">
           <el-select v-model="formData.gender" placeholder="请选择性别" style="width: 100%">
@@ -106,7 +154,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { accountApi } from '@/api'
+import { accountApi, departmentApi } from '@/api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Edit, Delete, Refresh } from '@element-plus/icons-vue'
 import type { FormInstance, FormRules } from 'element-plus'
@@ -116,12 +164,36 @@ const submitting = ref(false)
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const editId = ref<number>(0)
+const currentPage = ref(1)
+const pageSize = ref(10)
+const total = ref(0)
 
 const users = ref<any[]>([])
+const departments = ref<any[]>([])
 
 const formRef = ref<FormInstance>()
 
-const formData = reactive({
+const searchForm = reactive<{
+  username: string
+  status: number | undefined
+  roleLevel: number | undefined
+}>({
+  username: '',
+  status: undefined,
+  roleLevel: undefined
+})
+
+const formData = reactive<{
+  username: string
+  name: string
+  gender: string
+  phone: string
+  password: string
+  roleLevel: number
+  status: number
+  isSuper: number
+  departmentId: number | undefined
+}>({
   username: '',
   name: '',
   gender: '男',
@@ -129,7 +201,8 @@ const formData = reactive({
   password: '',
   roleLevel: 1,
   status: 1,
-  isSuper: 0
+  isSuper: 0,
+  departmentId: undefined
 })
 
 const formRules: FormRules = {
@@ -153,15 +226,60 @@ function roleTagType(level: number): 'info' | 'warning' | 'danger' {
   return map[level] || 'info'
 }
 
+async function loadDepartments() {
+  try {
+    departments.value = await departmentApi.getAll()
+  } catch (error: any) {
+    ElMessage.error(error.message || '加载部门列表失败')
+  }
+}
+
 async function loadUsers() {
   loading.value = true
   try {
-    users.value = await accountApi.getAll()
+    const params: {
+      username?: string
+      status?: number
+      roleLevel?: number
+      page: number
+      size: number
+    } = {
+      page: currentPage.value - 1,
+      size: pageSize.value
+    }
+    if (searchForm.username.trim()) {
+      params.username = searchForm.username.trim()
+    }
+    if (searchForm.status !== undefined && searchForm.status !== null) {
+      params.status = searchForm.status
+    }
+    if (searchForm.roleLevel !== undefined && searchForm.roleLevel !== null) {
+      params.roleLevel = searchForm.roleLevel
+    }
+    const result: any = await accountApi.page(params)
+    users.value = result.list || []
+    total.value = result.totalElements || 0
   } catch (error: any) {
     ElMessage.error(error.message || '加载用户列表失败')
   } finally {
     loading.value = false
   }
+}
+
+function handleSearch() {
+  currentPage.value = 1
+  loadUsers()
+}
+
+function onPageChange(page: number) {
+  currentPage.value = page
+  loadUsers()
+}
+
+function onSizeChange(size: number) {
+  pageSize.value = size
+  currentPage.value = 1
+  loadUsers()
 }
 
 function resetForm() {
@@ -173,6 +291,7 @@ function resetForm() {
   formData.roleLevel = 1
   formData.status = 1
   formData.isSuper = 0
+  formData.departmentId = undefined
   isEdit.value = false
   editId.value = 0
   formRef.value?.resetFields()
@@ -194,6 +313,7 @@ function openEditDialog(row: any) {
   formData.roleLevel = row.roleLevel
   formData.status = row.status
   formData.isSuper = row.isSuper
+  formData.departmentId = row.departmentId ?? undefined
   dialogVisible.value = true
 }
 
@@ -204,9 +324,12 @@ async function handleSubmit() {
 
     submitting.value = true
     try {
-      const data = { ...formData }
+      const data: any = { ...formData }
       if (data.password === '') {
         delete data.password
+      }
+      if (data.departmentId === undefined) {
+        data.departmentId = null
       }
 
       if (isEdit.value) {
@@ -248,6 +371,7 @@ async function handleDelete(row: any) {
 }
 
 onMounted(() => {
+  loadDepartments()
   loadUsers()
 })
 </script>
@@ -259,9 +383,22 @@ onMounted(() => {
   padding: 20px;
 }
 
+.search-bar {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
 .page-header {
   display: flex;
   gap: 12px;
   margin-bottom: 20px;
+}
+
+.pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 </style>
